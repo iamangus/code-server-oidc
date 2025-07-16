@@ -88,7 +88,7 @@ func main() {
 	app.Get("/health", h.Health)
 	
 	// User routing - must be last as it's a catch-all
-	app.Use("/~/:username", h.ProxyUser)
+	app.Use("/~", h.ProxyUser)
 
 	// Start cleanup goroutine
 	ctx, cancel := context.WithCancel(context.Background())

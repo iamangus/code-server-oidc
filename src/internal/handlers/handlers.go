@@ -40,8 +40,7 @@ func (h *Handlers) Landing(c *fiber.Ctx) error {
 	sessionID := c.Cookies("session_id")
 	if sessionID != "" {
 		if sessionData, exists := h.sessionStore.GetSession(sessionID); exists {
-			username := sessionData.Username
-			return c.Redirect(fmt.Sprintf("/~/%s", username))
+			return c.Redirect("/~")
 		}
 	}
 
@@ -156,7 +155,7 @@ func (h *Handlers) Callback(c *fiber.Ctx) error {
 	}
 	h.sessionStore.SetUser(username, userData)
 
-	return c.Redirect(fmt.Sprintf("/~/%s", username))
+	return c.Redirect("/~")
 }
 
 func (h *Handlers) Logout(c *fiber.Ctx) error {
@@ -183,13 +182,6 @@ func (h *Handlers) Logout(c *fiber.Ctx) error {
 }
 
 func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
-	username := c.Params("username")
-	
-	// Validate username format
-	if !isValidUsername(username) {
-		return c.Status(fiber.StatusBadRequest).SendString("Invalid username")
-	}
-
 	// Check authentication
 	sessionID := c.Cookies("session_id")
 	if sessionID == "" {
@@ -197,8 +189,15 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	}
 
 	sessionData, exists := h.sessionStore.GetSession(sessionID)
-	if !exists || sessionData.Username != username {
+	if !exists {
 		return c.Redirect("/")
+	}
+
+	username := sessionData.Username
+	
+	// Validate username format
+	if !isValidUsername(username) {
+		return c.Status(fiber.StatusBadRequest).SendString("Invalid username")
 	}
 
 	// Update last activity
@@ -245,10 +244,12 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	// Build target URL
 	targetURL := fmt.Sprintf("http://localhost:%d", inst.Port)
 	
-	// Handle path rewriting
-	path := strings.TrimPrefix(c.Path(), fmt.Sprintf("/~/%s", username))
-	if path == "" || path == "/" {
+	// Handle path rewriting - we're now at /~ so just use the path as-is
+	path := c.Path()
+	if path == "/~" {
 		path = "/"
+	} else if strings.HasPrefix(path, "/~/") {
+		path = strings.TrimPrefix(path, "/~")
 	}
 	
 	// Add query parameters
@@ -299,6 +300,14 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	if err := client.Do(req, resp); err != nil {
 		h.logger.Errorf("Proxy error to %s: %v", target, err)
 		return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("Failed to connect to code-server: %v", err))
+	}
+	
+	// Handle redirect cleanup - remove folder parameter from root redirects
+	if resp.StatusCode() >= 300 && resp.StatusCode() < 400 {
+		location := string(resp.Header.Peek("Location"))
+		if location == "/?folder="+userHome || location == "/?folder="+userHome+"/" {
+			resp.Header.Set("Location", "/")
+		}
 	}
 	
 	// Copy response back to client
