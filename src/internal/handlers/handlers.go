@@ -276,10 +276,12 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	
 	// Handle path rewriting and folder parameter
 	var folderPath string
+	var addFolderParam bool
 	
 	if path == "/~" {
 		path = "/"
 		folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
+		addFolderParam = true
 	} else if strings.HasPrefix(path, "/~/") {
 		// Extract the subdirectory path
 		subPath := strings.TrimPrefix(path, "/~/")
@@ -289,16 +291,16 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 			folderPath = fmt.Sprintf("%s/%s/%s", h.config.CodeServer.HomeBase, username, subPath)
 		}
 		path = "/"
+		addFolderParam = true
 	} else {
-		// For static assets and other paths, keep the original path
-		// This allows static assets to be served correctly
-		folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
+		// For static assets and other paths, don't add folder parameter
+		addFolderParam = false
 	}
 	
 	// Build query parameters
 	queryArgs := c.Context().QueryArgs()
 	
-	// Create new query string with folder parameter
+	// Create new query string
 	newQuery := fasthttp.Args{}
 	
 	// Copy existing query parameters
@@ -306,11 +308,17 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 		newQuery.AddBytesKV(key, value)
 	})
 	
-	// Add folder parameter
-	newQuery.Set("folder", folderPath)
+	// Only add folder parameter for main app routes, not for static assets
+	if addFolderParam {
+		newQuery.Set("folder", fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username))
+	}
 	
 	// Create proxy request
-	target := fmt.Sprintf("%s%s?%s", targetURL, path, newQuery.String())
+	queryString := newQuery.String()
+	if queryString != "" {
+		queryString = "?" + queryString
+	}
+	target := fmt.Sprintf("%s%s%s", targetURL, path, queryString)
 	
 	h.logger.Infof("Proxying request for user %s to: %s", username, target)
 	h.logger.Infof("  Instance details: Port=%d, PID=%d", inst.Port, inst.PID)
