@@ -244,22 +244,43 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	// Build target URL
 	targetURL := fmt.Sprintf("http://localhost:%d", inst.Port)
 	
-	// Handle path rewriting - we're now at /~ so just use the path as-is
+	// Handle path rewriting and folder parameter
 	path := c.Path()
+	var folderPath string
+	
 	if path == "/~" {
 		path = "/"
+		folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
 	} else if strings.HasPrefix(path, "/~/") {
-		path = strings.TrimPrefix(path, "/~")
+		// Extract the subdirectory path
+		subPath := strings.TrimPrefix(path, "/~/")
+		if subPath == "" {
+			folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
+		} else {
+			folderPath = fmt.Sprintf("%s/%s/%s", h.config.CodeServer.HomeBase, username, subPath)
+		}
+		path = "/"
+	} else {
+		// Fallback - shouldn't normally happen
+		folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
 	}
 	
-	// Add query parameters
-	query := string(c.Context().QueryArgs().QueryString())
+	// Build query parameters
+	queryArgs := c.Context().QueryArgs()
+	
+	// Create new query string with folder parameter
+	newQuery := fasthttp.Args{}
+	
+	// Copy existing query parameters
+	queryArgs.VisitAll(func(key, value []byte) {
+		newQuery.AddBytesKV(key, value)
+	})
+	
+	// Add folder parameter
+	newQuery.Set("folder", folderPath)
 	
 	// Create proxy request
-	target := fmt.Sprintf("%s%s", targetURL, path)
-	if query != "" {
-		target = fmt.Sprintf("%s?%s", target, query)
-	}
+	target := fmt.Sprintf("%s%s?%s", targetURL, path, newQuery.String())
 	
 	h.logger.Infof("Proxying request for user %s to: %s", username, target)
 	h.logger.Infof("  Instance details: Port=%d, PID=%d", inst.Port, inst.PID)
