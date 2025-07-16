@@ -16,7 +16,7 @@ RUN dnf install dnf-plugins-core -y && \
     dnf install -y https://github.com/derailed/k9s/releases/download/v$k9s_VER/k9s_linux_amd64.rpm  && \
     dnf install -y https://github.com/getsops/sops/releases/download/v$SOSP_VER/sops-$SOSP_VER.x86_64.rpm && \
     dnf install -y epel-release && \
-    dnf install -y vim ipmitool kubectl opentofu sudo gh git zsh util-linux-user ansible golang && \
+    dnf install -y vim ipmitool kubectl opentofu sudo gh git zsh util-linux-user ansible golang net-tools && \
     dnf install -y libnss3.so libatk-1.0.so.0 chromium chromium-headless nss atk at-spi2-atk libXcomposite libXcursor libXdamage libXext libXi libXtst cups-libs libXScrnSaver libXrandr alsa-lib pango at-spi2-core libXt xorg-x11-server-Xvfb mesa-libgbm
 
 RUN which code-server
@@ -27,6 +27,5 @@ RUN go mod tidy  && \
     go build -o code-oidc ./cmd/wrapper/
 
 EXPOSE 8080
-
 
 ENTRYPOINT ["./code-oidc"]
