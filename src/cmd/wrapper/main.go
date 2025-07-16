@@ -87,8 +87,12 @@ func main() {
 	app.Get("/auth/logout", h.Logout)
 	app.Get("/health", h.Health)
 	
-	// User routing - must be last as it's a catch-all
+	// User routing for /~ paths
 	app.Use("/~", h.ProxyUser)
+	
+	// Static assets and other code-server paths
+	// This catches versioned static assets like /stable-*/static/*
+	app.Use("/", h.ProxyUser)
 
 	// Start cleanup goroutine
 	ctx, cancel := context.WithCancel(context.Background())

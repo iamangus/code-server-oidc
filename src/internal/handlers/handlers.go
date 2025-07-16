@@ -182,14 +182,44 @@ func (h *Handlers) Logout(c *fiber.Ctx) error {
 }
 
 func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
+	path := c.Path()
+	
+	// Skip authentication for landing page and auth routes
+	// These should be handled by their specific route handlers
+	if path == "/" || path == "/auth/login" || path == "/auth/callback" ||
+	   path == "/auth/logout" || path == "/health" {
+		return c.Next()
+	}
+	
+	// Check if this is a static asset request
+	isStaticAsset := strings.Contains(path, "/static/") ||
+		strings.Contains(path, "/stable-") ||
+		strings.HasSuffix(path, ".css") ||
+		strings.HasSuffix(path, ".js") ||
+		strings.HasSuffix(path, ".png") ||
+		strings.HasSuffix(path, ".svg") ||
+		strings.HasSuffix(path, ".ico") ||
+		strings.HasSuffix(path, ".woff") ||
+		strings.HasSuffix(path, ".woff2") ||
+		strings.HasSuffix(path, ".ttf")
+	
 	// Check authentication
 	sessionID := c.Cookies("session_id")
 	if sessionID == "" {
+		// For static assets, return 404 to let browser handle it gracefully
+		// This prevents redirect loops for assets that shouldn't require auth
+		if isStaticAsset {
+			return c.Status(fiber.StatusNotFound).SendString("Not found")
+		}
 		return c.Redirect("/")
 	}
 
 	sessionData, exists := h.sessionStore.GetSession(sessionID)
 	if !exists {
+		// For static assets, return 404
+		if isStaticAsset {
+			return c.Status(fiber.StatusNotFound).SendString("Not found")
+		}
 		return c.Redirect("/")
 	}
 
@@ -245,7 +275,6 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	targetURL := fmt.Sprintf("http://localhost:%d", inst.Port)
 	
 	// Handle path rewriting and folder parameter
-	path := c.Path()
 	var folderPath string
 	
 	if path == "/~" {
@@ -261,7 +290,8 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 		}
 		path = "/"
 	} else {
-		// Fallback - shouldn't normally happen
+		// For static assets and other paths, keep the original path
+		// This allows static assets to be served correctly
 		folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
 	}
 	
