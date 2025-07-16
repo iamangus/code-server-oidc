@@ -275,21 +275,14 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	targetURL := fmt.Sprintf("http://localhost:%d", inst.Port)
 	
 	// Handle path rewriting and folder parameter
-	var folderPath string
 	var addFolderParam bool
 	
 	if path == "/~" {
 		path = "/"
-		folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
 		addFolderParam = true
 	} else if strings.HasPrefix(path, "/~/") {
-		// Extract the subdirectory path
-		subPath := strings.TrimPrefix(path, "/~/")
-		if subPath == "" {
-			folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
-		} else {
-			folderPath = fmt.Sprintf("%s/%s/%s", h.config.CodeServer.HomeBase, username, subPath)
-		}
+		// Extract the subdirectory path and redirect to root with folder parameter
+		_ = strings.TrimPrefix(path, "/~/") // subPath is not used, but we extract it for clarity
 		path = "/"
 		addFolderParam = true
 	} else {
