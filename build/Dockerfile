@@ -6,7 +6,7 @@ ENV k9s_VER="0.32.4"
 ENV SOSP_VER="3.8.1"
 ENV HOSTNAME="devbox"
 
-#COPY build/kubernetes.repo /etc/yum.repos.d/kubernetes.repo 
+COPY build/kubernetes.repo /etc/yum.repos.d/kubernetes.repo 
 
 RUN dnf update -y
 
