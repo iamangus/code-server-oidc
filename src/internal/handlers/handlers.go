@@ -39,7 +39,7 @@ func New(cfg *config.Config, sessionStore *session.MemoryStore, instanceManager 
 func (h *Handlers) Landing(c *fiber.Ctx) error {
 	sessionID := c.Cookies("session_id")
 	if sessionID != "" {
-		if sessionData, exists := h.sessionStore.GetSession(sessionID); exists {
+		if _, exists := h.sessionStore.GetSession(sessionID); exists {
 			return c.Redirect("/~")
 		}
 	}
@@ -305,6 +305,7 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	// Handle redirect cleanup - remove folder parameter from root redirects
 	if resp.StatusCode() >= 300 && resp.StatusCode() < 400 {
 		location := string(resp.Header.Peek("Location"))
+		userHome := fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
 		if location == "/?folder="+userHome || location == "/?folder="+userHome+"/" {
 			resp.Header.Set("Location", "/")
 		}
