@@ -276,7 +276,6 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	// Build target URL
 	targetURL := fmt.Sprintf("http://localhost:%d", inst.Port)
 	
-	h.logger.Infof("Proxying request for user %s to: %s", username, targetURL)
 	h.logger.Infof("  Instance details: Port=%d, PID=%d", inst.Port, inst.PID)
 	
 	// Handle path rewriting
@@ -317,6 +316,8 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	if isWebSocket {
 		h.logger.Infof("Handling WebSocket upgrade for user %s", username)
 	}
+	
+	h.logger.Infof("Proxying request for user %s to: %s", username, target)
 	
 	// Use proper HTTP proxy with WebSocket support
 	return h.proxyRequest(c, target, username)
@@ -423,15 +424,28 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 
 // fiberProxyWriter implements http.ResponseWriter for Fiber proxy
 type fiberProxyWriter struct {
-	ctx *fiber.Ctx
+	ctx     *fiber.Ctx
+	headers http.Header
 }
 
 func (w *fiberProxyWriter) Header() http.Header {
-	return make(http.Header)
+	if w.headers == nil {
+		w.headers = make(http.Header)
+	}
+	return w.headers
 }
 
 func (w *fiberProxyWriter) WriteHeader(statusCode int) {
 	w.ctx.Status(statusCode)
+	
+	// Copy all headers from the response to Fiber context
+	if w.headers != nil {
+		for key, values := range w.headers {
+			for _, value := range values {
+				w.ctx.Set(key, value)
+			}
+		}
+	}
 }
 
 func (w *fiberProxyWriter) Write(b []byte) (int, error) {
