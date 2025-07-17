@@ -365,7 +365,7 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	h.logger.Infof("Proxying request for user %s to: %s", username, target)
 	
 	// Use proper HTTP proxy with WebSocket support
-	return h.proxyRequest(c, target, username)
+	return h.proxyRequest(c, target, username, inst.Port)
 }
 
 func (h *Handlers) Health(c *fiber.Ctx) error {
@@ -383,7 +383,7 @@ func generateRandomString(length int) string {
 }
 
 
-func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string) error {
+func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string, port int) error {
 	// Parse the target URL
 	target, err := url.Parse(targetURL)
 	if err != nil {
@@ -397,7 +397,7 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 	
 	if isWebSocket {
 		h.logger.Infof("Handling WebSocket upgrade for user %s to %s", username, targetURL)
-		return h.handleWebSocketUpgrade(c, target, username)
+		return h.handleWebSocketUpgrade(c, target, username, port)
 	}
 	
 	// Create reverse proxy for regular HTTP requests
@@ -409,8 +409,8 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 		path := c.Path()
 		
 		req.URL.Scheme = "http"
-		req.URL.Host = fmt.Sprintf("localhost:%d", target.Port())
-		req.Host = fmt.Sprintf("localhost:%d", target.Port())
+		req.URL.Host = fmt.Sprintf("localhost:%d", port)
+		req.Host = fmt.Sprintf("localhost:%d", port)
 		
 		// Set the path directly without rewriting
 		req.URL.Path = path
@@ -430,7 +430,7 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 	// Create a proper HTTP request
 	httpReq, err := http.NewRequest(
 		string(c.Method()),
-		fmt.Sprintf("http://localhost:%d%s", target.Port(), c.Path()),
+		fmt.Sprintf("http://localhost:%d%s", port, c.Path()),
 		nil,
 	)
 	if err != nil {
@@ -462,13 +462,13 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 }
 
 // handleWebSocketUpgrade handles WebSocket connections using a direct approach
-func (h *Handlers) handleWebSocketUpgrade(c *fiber.Ctx, target *url.URL, username string) error {
+func (h *Handlers) handleWebSocketUpgrade(c *fiber.Ctx, target *url.URL, username string, port int) error {
 	// Since Fiber doesn't easily support connection hijacking for WebSocket,
 	// we'll use a different approach - direct proxying
 	
 	// Build the target URL - use original path without modification
 	path := c.Path()
-	targetURL := fmt.Sprintf("http://localhost:%d%s", target.Port(), path)
+	targetURL := fmt.Sprintf("http://localhost:%d%s", port, path)
 	
 	// Build query parameters without modification
 	query := string(c.Context().QueryArgs().QueryString())
@@ -502,8 +502,8 @@ func (h *Handlers) handleWebSocketUpgrade(c *fiber.Ctx, target *url.URL, usernam
 	// Configure director for WebSocket - no URL substitution
 	proxy.Director = func(req *http.Request) {
 		req.URL.Scheme = "http"
-		req.URL.Host = fmt.Sprintf("localhost:%d", target.Port())
-		req.Host = fmt.Sprintf("localhost:%d", target.Port())
+		req.URL.Host = fmt.Sprintf("localhost:%d", port)
+		req.Host = fmt.Sprintf("localhost:%d", port)
 		
 		// Set the path directly without rewriting
 		req.URL.Path = c.Path()
