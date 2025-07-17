@@ -294,6 +294,10 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	}
 	
 	// Build the final target URL
+	// Ensure path starts with a slash
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
 	target := fmt.Sprintf("%s%s", targetURL, path)
 	
 	// Build query parameters
