@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -293,23 +294,28 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	// Build query parameters
 	queryArgs := c.Context().QueryArgs()
 	
-	// Create new query string
-	newQuery := fasthttp.Args{}
+	// Create new query string manually to avoid double encoding
+	var queryParts []string
 	
 	// Copy existing query parameters
 	queryArgs.VisitAll(func(key, value []byte) {
-		newQuery.AddBytesKV(key, value)
+		encodedKey := url.QueryEscape(string(key))
+		encodedValue := url.QueryEscape(string(value))
+		queryParts = append(queryParts, fmt.Sprintf("%s=%s", encodedKey, encodedValue))
 	})
 	
 	// Only add folder parameter for main app routes, not for static assets
 	if addFolderParam {
-		newQuery.Set("folder", fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username))
+		folderPath := fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
+		// URL encode the folder path but preserve forward slashes
+		encodedFolder := strings.ReplaceAll(url.QueryEscape(folderPath), "%2F", "/")
+		queryParts = append(queryParts, fmt.Sprintf("folder=%s", encodedFolder))
 	}
 	
 	// Create proxy request
-	queryString := newQuery.String()
-	if queryString != "" {
-		queryString = "?" + queryString
+	queryString := ""
+	if len(queryParts) > 0 {
+		queryString = "?" + strings.Join(queryParts, "&")
 	}
 	target := fmt.Sprintf("%s%s%s", targetURL, path, queryString)
 	
@@ -358,7 +364,8 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	if resp.StatusCode() >= 300 && resp.StatusCode() < 400 {
 		location := string(resp.Header.Peek("Location"))
 		userHome := fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
-		if location == "/?folder="+userHome || location == "/?folder="+userHome+"/" {
+		encodedUserHome := strings.ReplaceAll(url.QueryEscape(userHome), "%2F", "/")
+		if location == "/?folder="+encodedUserHome || location == "/?folder="+encodedUserHome+"/" {
 			resp.Header.Set("Location", "/")
 		}
 	}
