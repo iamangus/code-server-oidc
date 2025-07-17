@@ -113,16 +113,14 @@ func (m *Manager) StartInstance(username string) (int, error) {
 		return 0, fmt.Errorf("code-server executable not found: %s", m.config.CodeServer.Executable)
 	}
 	
-	args := []string{
-		"--auth", "none",
-		"--bind-addr", fmt.Sprintf("127.0.0.1:%d", port),
-		"--disable-telemetry",
-		userHome,
-	}
+	// Build the command to run as the user
+	command := fmt.Sprintf("%s --auth none --bind-addr 127.0.0.1:%d --disable-telemetry '%s'",
+		m.config.CodeServer.Executable, port, userHome)
 	
-	cmd := exec.Command(m.config.CodeServer.Executable, args...)
+	// Use su to run as the user
+	cmd := exec.Command("su", username, "--command", command)
 
-	// Set environment
+	// Set environment - su will handle most user environment variables
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("HOME=%s", userHome),
 		fmt.Sprintf("USER=%s", username),
@@ -134,7 +132,8 @@ func (m *Manager) StartInstance(username string) (int, error) {
 
 	// Log the exact command being executed
 	m.logger.Infof("Starting code-server for user %s:", username)
-	m.logger.Infof("  Command: %s %v", m.config.CodeServer.Executable, args)
+	m.logger.Infof("  Command: su %s --command \"%s --auth none --bind-addr 127.0.0.1:%d --disable-telemetry '%s'\"",
+		username, m.config.CodeServer.Executable, port, userHome)
 	m.logger.Infof("  Working directory: %s", userHome)
 	m.logger.Infof("  Environment: HOME=%s, USER=%s", userHome, username)
 
