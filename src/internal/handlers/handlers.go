@@ -44,7 +44,7 @@ func (h *Handlers) Landing(c *fiber.Ctx) error {
 		if _, exists := h.sessionStore.GetSession(sessionID); exists {
 			// Check if there's a redirect URL in the query parameters
 			queryRedirect := c.Query("redirect")
-			if queryRedirect != "" {
+			if queryRedirect != "" && queryRedirect != "/" {
 				// Validate the redirect URL to prevent open redirect vulnerabilities
 				parsedURL, err := url.Parse(queryRedirect)
 				if err == nil && parsedURL.Path != "" && !parsedURL.IsAbs() {
@@ -55,17 +55,21 @@ func (h *Handlers) Landing(c *fiber.Ctx) error {
 			
 			// Check for redirect URL after login
 			redirectURL := "/"
-			if redirectCookie := c.Cookies("redirect_after_login"); redirectCookie != "" {
+			if redirectCookie := c.Cookies("redirect_after_login"); redirectCookie != "" && redirectCookie != "/" {
 				redirectURL = redirectCookie
 				// Clear the redirect cookie
 				c.Cookie(&fiber.Cookie{
 					Name:   "redirect_after_login",
 					Value:  "",
 					MaxAge: -1,
+					Secure: false, // Allow HTTP for development
 				})
 			}
 			
-			return c.Redirect(redirectURL)
+			// Only redirect if we're not already on the landing page
+			if c.Path() != "/" {
+				return c.Redirect(redirectURL)
+			}
 		}
 	}
 
@@ -87,7 +91,7 @@ func (h *Handlers) Login(c *fiber.Ctx) error {
 		Name:     "oauth_state",
 		Value:    state,
 		HTTPOnly: true,
-		Secure:   true,
+		Secure:   false, // Allow HTTP for development
 		SameSite: "Lax",
 		MaxAge:   300, // 5 minutes
 	})
@@ -100,7 +104,7 @@ func (h *Handlers) Login(c *fiber.Ctx) error {
 			Name:     "redirect_after_login",
 			Value:    redirectURL,
 			HTTPOnly: true,
-			Secure:   true,
+			Secure:   false, // Allow HTTP for development
 			SameSite: "Lax",
 			MaxAge:   300, // 5 minutes
 		})
@@ -126,6 +130,7 @@ func (h *Handlers) Callback(c *fiber.Ctx) error {
 		Name:   "oauth_state",
 		Value:  "",
 		MaxAge: -1,
+		Secure: false, // Allow HTTP for development
 	})
 
 	// Get authorization code
@@ -174,7 +179,7 @@ func (h *Handlers) Callback(c *fiber.Ctx) error {
 		Name:     "session_id",
 		Value:    sessionID,
 		HTTPOnly: true,
-		Secure:   true,
+		Secure:   false, // Allow HTTP for development
 		SameSite: "Lax",
 		MaxAge:   h.config.Session.Timeout,
 	})
@@ -203,6 +208,7 @@ func (h *Handlers) Callback(c *fiber.Ctx) error {
 			Name:   "redirect_after_login",
 			Value:  "",
 			MaxAge: -1,
+			Secure: false, // Allow HTTP for development
 		})
 	}
 	
@@ -227,6 +233,7 @@ func (h *Handlers) Logout(c *fiber.Ctx) error {
 		Name:   "session_id",
 		Value:  "",
 		MaxAge: -1,
+		Secure: false, // Allow HTTP for development
 	})
 
 	return c.Redirect("/")
@@ -258,10 +265,15 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	sessionID := c.Cookies("session_id")
 	if sessionID == "" {
 		// For static assets, return 404 to let browser handle it gracefully
-		// This prevents redirect loops for assets that shouldn't require auth
 		if isStaticAsset {
 			return c.Status(fiber.StatusNotFound).SendString("Not found")
 		}
+		
+		// Check if we're already on the landing page to prevent redirect loop
+		if path == "/" || path == "" {
+			return c.Next() // Let the landing handler handle this
+		}
+		
 		// Preserve the original path for redirect after login
 		originalPath := c.Path()
 		if c.Context().QueryArgs().String() != "" {
@@ -277,6 +289,12 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 		if isStaticAsset {
 			return c.Status(fiber.StatusNotFound).SendString("Not found")
 		}
+		
+		// Check if we're already on the landing page to prevent redirect loop
+		if path == "/" || path == "" {
+			return c.Next() // Let the landing handler handle this
+		}
+		
 		// Preserve the original path for redirect after login
 		originalPath := c.Path()
 		if c.Context().QueryArgs().String() != "" {

@@ -80,7 +80,7 @@ func main() {
 	// Initialize handlers
 	h := handlers.New(cfg, sessionStore, instanceManager, oidcAuth, logger)
 
-	// Routes
+	// Routes - order matters for middleware
 	app.Get("/", h.Landing)
 	app.Get("/auth/login", h.Login)
 	app.Get("/auth/callback", h.Callback)
@@ -92,6 +92,7 @@ func main() {
 	
 	// Static assets and other code-server paths
 	// This catches versioned static assets like /stable-*/static/*
+	// But only after auth routes are handled
 	app.Use("/", h.ProxyUser)
 
 	// Start cleanup goroutine
