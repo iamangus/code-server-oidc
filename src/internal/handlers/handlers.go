@@ -349,7 +349,24 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	req.Header.Set("X-Real-IP", c.IP())
 	req.Header.Set("X-Forwarded-For", c.IP())
 	
-	// Make the request with timeout
+	// Preserve WebSocket headers
+	if c.Get("Upgrade") != "" {
+		req.Header.Set("Upgrade", c.Get("Upgrade"))
+	}
+	if c.Get("Connection") != "" {
+		req.Header.Set("Connection", c.Get("Connection"))
+	}
+	if c.Get("Sec-WebSocket-Key") != "" {
+		req.Header.Set("Sec-WebSocket-Key", c.Get("Sec-WebSocket-Key"))
+	}
+	if c.Get("Sec-WebSocket-Version") != "" {
+		req.Header.Set("Sec-WebSocket-Version", c.Get("Sec-WebSocket-Version"))
+	}
+	if c.Get("Sec-WebSocket-Protocol") != "" {
+		req.Header.Set("Sec-WebSocket-Protocol", c.Get("Sec-WebSocket-Protocol"))
+	}
+	
+	// Make regular HTTP request with timeout
 	client := &fasthttp.Client{
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -390,6 +407,7 @@ func generateRandomString(length int) string {
 	return hex.EncodeToString(b)
 }
 
+
 func isValidUsername(username string) bool {
 	if username == "" {
 		return false
@@ -397,9 +415,9 @@ func isValidUsername(username string) bool {
 	
 	// Basic validation - alphanumeric and underscore only
 	for _, char := range username {
-		if !(char >= 'a' && char <= 'z') && 
-		   !(char >= 'A' && char <= 'Z') && 
-		   !(char >= '0' && char <= '9') && 
+		if !(char >= 'a' && char <= 'z') &&
+		   !(char >= 'A' && char <= 'Z') &&
+		   !(char >= '0' && char <= '9') &&
 		   char != '_' && char != '-' {
 			return false
 		}

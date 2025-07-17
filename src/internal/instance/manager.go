@@ -115,7 +115,7 @@ func (m *Manager) StartInstance(username string) (int, error) {
 	}
 	
 	// Build the command to run as the user
-	command := fmt.Sprintf("%s --auth none --bind-addr 127.0.0.1:%d --disable-telemetry '%s'",
+	command := fmt.Sprintf("%s --auth none --bind-addr 0.0.0.0:%d --disable-telemetry --disable-update-check '%s'",
 		m.config.CodeServer.Executable, port, userHome)
 	
 	// Use su to run as the user
