@@ -194,13 +194,18 @@ func (h *Handlers) Callback(c *fiber.Ctx) error {
 	}
 	h.sessionStore.SetUser(username, userData)
 
-	// Check if there's a redirect URL in the session
+	// Check for redirect URL after login
 	redirectURL := "/~"
-	if sessionData, exists := h.sessionStore.GetSession(sessionID); exists {
-		// For now, use the default redirect
-		// In a future enhancement, we could store the original redirect in the session
-		_ = sessionData
+	if redirectCookie := c.Cookies("redirect_after_login"); redirectCookie != "" {
+		redirectURL = redirectCookie
+		// Clear the redirect cookie
+		c.Cookie(&fiber.Cookie{
+			Name:   "redirect_after_login",
+			Value:  "",
+			MaxAge: -1,
+		})
 	}
+	
 	return c.Redirect(redirectURL)
 }
 
@@ -409,6 +414,14 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 	// Create reverse proxy
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	
+	// Check if this is a WebSocket upgrade request
+	isWebSocket := strings.Contains(strings.ToLower(c.Get("Connection")), "upgrade") &&
+		strings.ToLower(c.Get("Upgrade")) == "websocket"
+	
+	if isWebSocket {
+		h.logger.Infof("Handling WebSocket upgrade for user %s to %s", username, targetURL)
+	}
+	
 	// Update the director to handle path and query parameters
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -430,6 +443,10 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 			if path == "" {
 				path = "/"
 			}
+		} else if strings.HasPrefix(path, "/stable-") {
+			// Handle stable endpoints directly without modification
+			// Keep the original path for stable endpoints
+			h.logger.Infof("Proxying stable endpoint: %s", path)
 		}
 		
 		req.URL.Path = path
@@ -447,17 +464,6 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 		req.Header.Set("X-Forwarded-For", c.IP())
 	}
 	
-	// Check if this is a WebSocket upgrade request
-	isWebSocket := strings.Contains(strings.ToLower(c.Get("Connection")), "upgrade") &&
-		strings.ToLower(c.Get("Upgrade")) == "websocket"
-	
-	if isWebSocket {
-		h.logger.Infof("Handling WebSocket upgrade for user %s", username)
-	}
-	
-	// Use a simpler approach - let Fiber handle the proxy via middleware
-	// This is a more direct approach using the reverse proxy
-	
 	// Create HTTP request from Fiber context
 	httpReq, httpErr := http.NewRequest(c.Method(), c.OriginalURL(), nil)
 	if httpErr != nil {
@@ -465,7 +471,7 @@ func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create request")
 	}
 	
-	// Copy headers
+	// Copy headers - ensure WebSocket headers are preserved
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		httpReq.Header.Set(string(key), string(value))
 	})
