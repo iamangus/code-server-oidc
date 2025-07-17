@@ -93,24 +93,25 @@ func (m *Manager) StartInstance(username string) (int, error) {
 		return 0, fmt.Errorf("failed to allocate port: %w", err)
 	}
 
-	// Prepare command
+	// Prepare paths
 	userHome := fmt.Sprintf("%s/%s", m.config.CodeServer.HomeBase, username)
 	
-	// Check if user home directory exists
-	if _, err := os.Stat(userHome); os.IsNotExist(err) {
-		m.logger.Warnf("User home directory does not exist: %s", userHome)
-		// Try to create it
-		if err := os.MkdirAll(userHome, 0755); err != nil {
-			m.logger.Errorf("Failed to create user home directory: %v", err)
-			return 0, fmt.Errorf("user home directory does not exist and cannot be created: %w", err)
-		}
-		m.logger.Infof("Created user home directory: %s", userHome)
+	// Ensure user exists and create if necessary
+	if err := m.ensureUserExists(username, userHome); err != nil {
+		m.logger.Errorf("Failed to ensure user exists: %v", err)
+		return 0, fmt.Errorf("failed to ensure user exists: %w", err)
 	}
 	
 	// Check if code-server executable exists
 	if _, err := os.Stat(m.config.CodeServer.Executable); os.IsNotExist(err) {
 		m.logger.Errorf("Code-server executable not found: %s", m.config.CodeServer.Executable)
 		return 0, fmt.Errorf("code-server executable not found: %s", m.config.CodeServer.Executable)
+	}
+	
+	// Ensure home directory exists with correct ownership
+	if err := m.ensureHomeDirectory(username, userHome); err != nil {
+		m.logger.Errorf("Failed to ensure home directory: %v", err)
+		return 0, fmt.Errorf("failed to ensure home directory: %w", err)
 	}
 	
 	// Build the command to run as the user
@@ -295,4 +296,59 @@ func (m *Manager) Shutdown() {
 		delete(m.instances, username)
 		m.portAllocator.Release(instance.Port)
 	}
+}
+
+// ensureUserExists checks if a user exists and creates them if they don't
+func (m *Manager) ensureUserExists(username, userHome string) error {
+	// Check if user exists by looking up their UID
+	_, err := exec.Command("id", username).CombinedOutput()
+	if err == nil {
+		m.logger.Infof("User %s already exists", username)
+		return nil
+	}
+
+	m.logger.Infof("User %s does not exist, creating...", username)
+
+	// Create user with home directory
+	cmd := exec.Command("useradd", "-m", "-d", userHome, "-s", "/bin/bash", username)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		m.logger.Errorf("Failed to create user %s: %v, output: %s", username, err, string(output))
+		return fmt.Errorf("failed to create user %s: %w, output: %s", username, err, string(output))
+	}
+
+	m.logger.Infof("Successfully created user %s with home directory %s", username, userHome)
+	return nil
+}
+
+// ensureHomeDirectory ensures the home directory exists with correct ownership
+func (m *Manager) ensureHomeDirectory(username, userHome string) error {
+	// Check if directory exists
+	if _, err := os.Stat(userHome); os.IsNotExist(err) {
+		m.logger.Infof("Creating home directory: %s", userHome)
+		
+		// Create directory
+		if err := os.MkdirAll(userHome, 0755); err != nil {
+			return fmt.Errorf("failed to create home directory: %w", err)
+		}
+		
+		// Change ownership to the user
+		cmd := exec.Command("chown", "-R", fmt.Sprintf("%s:%s", username, username), userHome)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			m.logger.Errorf("Failed to change ownership of %s: %v, output: %s", userHome, err, string(output))
+			return fmt.Errorf("failed to change ownership: %w, output: %s", err, string(output))
+		}
+		
+		m.logger.Infof("Created and configured home directory: %s", userHome)
+	} else {
+		// Directory exists, verify ownership
+		cmd := exec.Command("chown", "-R", fmt.Sprintf("%s:%s", username, username), userHome)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			m.logger.Warnf("Failed to ensure ownership of %s: %v, output: %s", userHome, err, string(output))
+		}
+	}
+	
+	return nil
 }
