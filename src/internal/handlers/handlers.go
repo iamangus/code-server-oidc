@@ -5,12 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/valyala/fasthttp"
 	"go.uber.org/zap"
 
 	"oidc-code-server-wrapper/internal/auth"
@@ -275,122 +276,50 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 	// Build target URL
 	targetURL := fmt.Sprintf("http://localhost:%d", inst.Port)
 	
-	// Handle path rewriting and folder parameter
-	var addFolderParam bool
+	h.logger.Infof("Proxying request for user %s to: %s", username, targetURL)
+	h.logger.Infof("  Instance details: Port=%d, PID=%d", inst.Port, inst.PID)
+	
+	// Handle path rewriting
+	path = c.Path()
+	var folderPath string
 	
 	if path == "/~" {
 		path = "/"
-		addFolderParam = true
+		folderPath = fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
 	} else if strings.HasPrefix(path, "/~/") {
-		// Extract the subdirectory path and redirect to root with folder parameter
-		_ = strings.TrimPrefix(path, "/~/") // subPath is not used, but we extract it for clarity
-		path = "/"
-		addFolderParam = true
-	} else {
-		// For static assets and other paths, don't add folder parameter
-		addFolderParam = false
+		path = strings.TrimPrefix(path, "/~/")
+		if path == "" {
+			path = "/"
+		}
+		// Don't add folder parameter for subdirectories
 	}
+	
+	// Build the final target URL
+	target := fmt.Sprintf("%s%s", targetURL, path)
 	
 	// Build query parameters
-	queryArgs := c.Context().QueryArgs()
-	
-	// Create new query string manually to avoid double encoding
-	var queryParts []string
-	
-	// Copy existing query parameters
-	queryArgs.VisitAll(func(key, value []byte) {
-		encodedKey := url.QueryEscape(string(key))
-		encodedValue := url.QueryEscape(string(value))
-		queryParts = append(queryParts, fmt.Sprintf("%s=%s", encodedKey, encodedValue))
-	})
-	
-	// Only add folder parameter for main app routes, not for static assets
-	if addFolderParam {
-		folderPath := fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
-		// URL encode the folder path but preserve forward slashes
-		encodedFolder := strings.ReplaceAll(url.QueryEscape(folderPath), "%2F", "/")
-		queryParts = append(queryParts, fmt.Sprintf("folder=%s", encodedFolder))
-	}
-	
-	// Create proxy request
-	queryString := ""
-	if len(queryParts) > 0 {
-		queryString = "?" + strings.Join(queryParts, "&")
-	}
-	target := fmt.Sprintf("%s%s%s", targetURL, path, queryString)
-	
-	h.logger.Infof("Proxying request for user %s to: %s", username, target)
-	h.logger.Infof("  Instance details: Port=%d, PID=%d", inst.Port, inst.PID)
-	
-	// Test if the code-server is actually running
-	testURL := fmt.Sprintf("http://localhost:%d", inst.Port)
-	h.logger.Debugf("Testing connection to: %s", testURL)
-	
-	// Use fasthttp to proxy the request
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
-	
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
-	
-	// Copy the original request
-	c.Request().CopyTo(req)
-	req.SetRequestURI(target)
-	req.Header.SetMethod(c.Method())
-	req.Header.SetHost(fmt.Sprintf("localhost:%d", inst.Port))
-	
-	// Clear problematic headers
-	req.Header.Del("Connection")
-	req.Header.Del("Proxy-Connection")
-	
-	// Set proxy headers
-	req.Header.Set("X-Forwarded-Host", string(c.Request().Host()))
-	req.Header.Set("X-Forwarded-Proto", "https")
-	req.Header.Set("X-Real-IP", c.IP())
-	req.Header.Set("X-Forwarded-For", c.IP())
-	
-	// Preserve WebSocket headers
-	if c.Get("Upgrade") != "" {
-		req.Header.Set("Upgrade", c.Get("Upgrade"))
-	}
-	if c.Get("Connection") != "" {
-		req.Header.Set("Connection", c.Get("Connection"))
-	}
-	if c.Get("Sec-WebSocket-Key") != "" {
-		req.Header.Set("Sec-WebSocket-Key", c.Get("Sec-WebSocket-Key"))
-	}
-	if c.Get("Sec-WebSocket-Version") != "" {
-		req.Header.Set("Sec-WebSocket-Version", c.Get("Sec-WebSocket-Version"))
-	}
-	if c.Get("Sec-WebSocket-Protocol") != "" {
-		req.Header.Set("Sec-WebSocket-Protocol", c.Get("Sec-WebSocket-Protocol"))
-	}
-	
-	// Make regular HTTP request with timeout
-	client := &fasthttp.Client{
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-	}
-	
-	if err := client.Do(req, resp); err != nil {
-		h.logger.Errorf("Proxy error to %s: %v", target, err)
-		return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("Failed to connect to code-server: %v", err))
-	}
-	
-	// Handle redirect cleanup - remove folder parameter from root redirects
-	if resp.StatusCode() >= 300 && resp.StatusCode() < 400 {
-		location := string(resp.Header.Peek("Location"))
-		userHome := fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
-		encodedUserHome := strings.ReplaceAll(url.QueryEscape(userHome), "%2F", "/")
-		if location == "/?folder="+encodedUserHome || location == "/?folder="+encodedUserHome+"/" {
-			resp.Header.Set("Location", "/")
+	query := c.Context().QueryArgs().String()
+	if folderPath != "" {
+		if query != "" {
+			query += "&"
 		}
+		query += "folder=" + url.QueryEscape(folderPath)
 	}
 	
-	// Copy response back to client
-	resp.CopyTo(c.Response())
+	if query != "" {
+		target += "?" + query
+	}
 	
-	return nil
+	// Check if this is a WebSocket upgrade request
+	isWebSocket := strings.Contains(strings.ToLower(c.Get("Connection")), "upgrade") &&
+		strings.ToLower(c.Get("Upgrade")) == "websocket"
+	
+	if isWebSocket {
+		h.logger.Infof("Handling WebSocket upgrade for user %s", username)
+	}
+	
+	// Use proper HTTP proxy with WebSocket support
+	return h.proxyRequest(c, target, username)
 }
 
 func (h *Handlers) Health(c *fiber.Ctx) error {
@@ -407,6 +336,107 @@ func generateRandomString(length int) string {
 	return hex.EncodeToString(b)
 }
 
+
+func (h *Handlers) proxyRequest(c *fiber.Ctx, targetURL string, username string) error {
+	// Parse the target URL
+	target, err := url.Parse(targetURL)
+	if err != nil {
+		h.logger.Errorf("Invalid target URL: %v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Invalid target URL")
+	}
+	
+	// Create reverse proxy
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	
+	// Update the director to handle path and query parameters
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		
+		// Handle path rewriting
+		path := c.Path()
+		
+		if path == "/~" {
+			path = "/"
+			// Add folder parameter for root access
+			folderPath := fmt.Sprintf("%s/%s", h.config.CodeServer.HomeBase, username)
+			query := req.URL.Query()
+			query.Set("folder", folderPath)
+			req.URL.RawQuery = query.Encode()
+		} else if strings.HasPrefix(path, "/~/") {
+			// Remove the /~/ prefix and keep the rest of the path
+			path = strings.TrimPrefix(path, "/~/")
+			if path == "" {
+				path = "/"
+			}
+		}
+		
+		req.URL.Path = path
+		req.Host = fmt.Sprintf("localhost:%d", target.Port())
+		
+		// Copy headers from Fiber context
+		c.Request().Header.VisitAll(func(key, value []byte) {
+			req.Header.Set(string(key), string(value))
+		})
+		
+		// Set proxy headers
+		req.Header.Set("X-Forwarded-Host", string(c.Context().Host()))
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("X-Real-IP", c.IP())
+		req.Header.Set("X-Forwarded-For", c.IP())
+	}
+	
+	// Check if this is a WebSocket upgrade request
+	isWebSocket := strings.Contains(strings.ToLower(c.Get("Connection")), "upgrade") &&
+		strings.ToLower(c.Get("Upgrade")) == "websocket"
+	
+	if isWebSocket {
+		h.logger.Infof("Handling WebSocket upgrade for user %s", username)
+	}
+	
+	// Use a simpler approach - let Fiber handle the proxy via middleware
+	// This is a more direct approach using the reverse proxy
+	
+	// Create HTTP request from Fiber context
+	httpReq, httpErr := http.NewRequest(c.Method(), c.OriginalURL(), nil)
+	if httpErr != nil {
+		h.logger.Errorf("Failed to create HTTP request: %v", httpErr)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create request")
+	}
+	
+	// Copy headers
+	c.Request().Header.VisitAll(func(key, value []byte) {
+		httpReq.Header.Set(string(key), string(value))
+	})
+	
+	// Apply director
+	proxy.Director(httpReq)
+	
+	// Create a custom response writer that writes directly to Fiber
+	rw := &fiberProxyWriter{ctx: c}
+	
+	// Serve the request
+	proxy.ServeHTTP(rw, httpReq)
+	
+	return nil
+}
+
+// fiberProxyWriter implements http.ResponseWriter for Fiber proxy
+type fiberProxyWriter struct {
+	ctx *fiber.Ctx
+}
+
+func (w *fiberProxyWriter) Header() http.Header {
+	return make(http.Header)
+}
+
+func (w *fiberProxyWriter) WriteHeader(statusCode int) {
+	w.ctx.Status(statusCode)
+}
+
+func (w *fiberProxyWriter) Write(b []byte) (int, error) {
+	return w.ctx.Write(b)
+}
 
 func isValidUsername(username string) bool {
 	if username == "" {
