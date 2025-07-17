@@ -42,7 +42,30 @@ func (h *Handlers) Landing(c *fiber.Ctx) error {
 	sessionID := c.Cookies("session_id")
 	if sessionID != "" {
 		if _, exists := h.sessionStore.GetSession(sessionID); exists {
-			return c.Redirect("/~")
+			// Check if there's a redirect URL in the query parameters
+			queryRedirect := c.Query("redirect")
+			if queryRedirect != "" {
+				// Validate the redirect URL to prevent open redirect vulnerabilities
+				parsedURL, err := url.Parse(queryRedirect)
+				if err == nil && parsedURL.Path != "" && !parsedURL.IsAbs() {
+					// Only allow relative paths
+					return c.Redirect(queryRedirect)
+				}
+			}
+			
+			// Check for redirect URL after login
+			redirectURL := "/~"
+			if redirectCookie := c.Cookies("redirect_after_login"); redirectCookie != "" {
+				redirectURL = redirectCookie
+				// Clear the redirect cookie
+				c.Cookie(&fiber.Cookie{
+					Name:   "redirect_after_login",
+					Value:  "",
+					MaxAge: -1,
+				})
+			}
+			
+			return c.Redirect(redirectURL)
 		}
 	}
 
@@ -68,6 +91,20 @@ func (h *Handlers) Login(c *fiber.Ctx) error {
 		SameSite: "Lax",
 		MaxAge:   300, // 5 minutes
 	})
+
+	// Check for redirect parameter and store it
+	redirectURL := c.Query("redirect")
+	if redirectURL != "" {
+		// Store redirect URL in a cookie for use after authentication
+		c.Cookie(&fiber.Cookie{
+			Name:     "redirect_after_login",
+			Value:    redirectURL,
+			HTTPOnly: true,
+			Secure:   true,
+			SameSite: "Lax",
+			MaxAge:   300, // 5 minutes
+		})
+	}
 
 	// Generate authorization URL
 	authURL := h.oidcAuth.GetAuthURL(state)
@@ -157,7 +194,14 @@ func (h *Handlers) Callback(c *fiber.Ctx) error {
 	}
 	h.sessionStore.SetUser(username, userData)
 
-	return c.Redirect("/~")
+	// Check if there's a redirect URL in the session
+	redirectURL := "/~"
+	if sessionData, exists := h.sessionStore.GetSession(sessionID); exists {
+		// For now, use the default redirect
+		// In a future enhancement, we could store the original redirect in the session
+		_ = sessionData
+	}
+	return c.Redirect(redirectURL)
 }
 
 func (h *Handlers) Logout(c *fiber.Ctx) error {
@@ -213,7 +257,13 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 		if isStaticAsset {
 			return c.Status(fiber.StatusNotFound).SendString("Not found")
 		}
-		return c.Redirect("/")
+		// Preserve the original path for redirect after login
+		originalPath := c.Path()
+		if c.Context().QueryArgs().String() != "" {
+			originalPath += "?" + c.Context().QueryArgs().String()
+		}
+		redirectURL := "/?redirect=" + url.QueryEscape(originalPath)
+		return c.Redirect(redirectURL)
 	}
 
 	sessionData, exists := h.sessionStore.GetSession(sessionID)
@@ -222,7 +272,13 @@ func (h *Handlers) ProxyUser(c *fiber.Ctx) error {
 		if isStaticAsset {
 			return c.Status(fiber.StatusNotFound).SendString("Not found")
 		}
-		return c.Redirect("/")
+		// Preserve the original path for redirect after login
+		originalPath := c.Path()
+		if c.Context().QueryArgs().String() != "" {
+			originalPath += "?" + c.Context().QueryArgs().String()
+		}
+		redirectURL := "/?redirect=" + url.QueryEscape(originalPath)
+		return c.Redirect(redirectURL)
 	}
 
 	username := sessionData.Username
