@@ -115,7 +115,7 @@ func (m *Manager) StartInstance(username string) (int, error) {
 	}
 	
 	// Build the command to run as the user
-	command := fmt.Sprintf("%s --auth none --bind-addr 0.0.0.0:%d --disable-telemetry --disable-update-check '%s'",
+	command := fmt.Sprintf("%s --auth none --bind-addr 0.0.0.0:%d --disable-telemetry --disable-update-check --disable-workspace-trust '%s'",
 		m.config.CodeServer.Executable, port, userHome)
 	
 	// Use su to run as the user
@@ -133,7 +133,7 @@ func (m *Manager) StartInstance(username string) (int, error) {
 
 	// Log the exact command being executed
 	m.logger.Infof("Starting code-server for user %s:", username)
-	m.logger.Infof("  Command: su %s --command \"%s --auth none --bind-addr 127.0.0.1:%d --disable-telemetry '%s'\"",
+	m.logger.Infof("  Command: su %s --command \"%s --auth none --bind-addr 0.0.0.0:%d --disable-telemetry '%s'\"",
 		username, m.config.CodeServer.Executable, port, userHome)
 	m.logger.Infof("  Working directory: %s", userHome)
 	m.logger.Infof("  Environment: HOME=%s, USER=%s", userHome, username)
